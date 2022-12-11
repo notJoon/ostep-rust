@@ -1,22 +1,32 @@
 use std::collections::HashMap;
 use std::string::String;
 
-use rand::random;
+use clap::Parser;
+use rand::thread_rng;
+use rand::Rng;
+use regex::Regex;
 
 use crate::hash_map;
+use crate::seed;
 
-fn seed() -> i32 {
-    rand::random()
-}
+// from this sort of things:
+// a forks b
+// a forks c
+// a forks d
+// b forks e
+// b forks f
+// d forks g
 
-fn randint(low: i32, high: i32) -> i32 {
-    low + (random::<i32>() * (high - low + 1))
-}
+// process tree
+// a --- b --- e
+//    |     |
+//    |     |- f
+//    |- c
+//    |
+//    |- d --- g
 
-fn choice(arr: Vec<i32>) -> i32 {
-    arr[randint(0, arr.len() as i32) as usize]
-}
-
+// TODO : add `seed` to Forker, for enabled to use `clap::Parser`
+#[derive(Clone, Debug, PartialEq)]
 struct Forker {
     fork_percentage: f64,
     max_actions: u32,
@@ -104,7 +114,8 @@ impl Forker {
             self.grow_names();
         }
 
-        let name = self.curr_names
+        let name = self
+            .curr_names
             .chars()
             .nth(self.curr_index as usize)
             .unwrap();
@@ -129,7 +140,7 @@ impl Forker {
                 }
 
                 return;
-            },
+            }
 
             "line1" => chars = ["|", "-", "+", "|"],
             "line2" => chars = ["|", "_", "|", "|"],
@@ -138,7 +149,7 @@ impl Forker {
             _ => {
                 println!("bad style {}", self.print_style);
                 std::process::exit(1);
-            },
+            }
         }
 
         // print something before node
@@ -151,7 +162,7 @@ impl Forker {
                 }
             }
             // "|__"
-            match pmask[level-1] {
+            match pmask[level - 1] {
                 true => print!("{}{}{} ", chars[3], chars[1], chars[1]),
                 false => print!("{}{}{} ", chars[2], chars[1], chars[1]),
             }
@@ -165,12 +176,12 @@ impl Forker {
 
         // undo parent verticals
         if is_last {
-            pmask[level-1] = false;
+            pmask[level - 1] = false;
         }
 
         // recurse
         pmask[level] = true;
-        
+
         for child in self.children[&p][..self.children[&p].len() - 1].iter() {
             self.walk(*child, level + 1, pmask, false);
         }
@@ -194,7 +205,7 @@ impl Forker {
     }
 
     fn collect_children(&self, p: char) -> Vec<char> {
-        match self.children[&p] == vec![] {
+        match self.children[&p].is_empty() {
             true => vec![p],
             false => {
                 let mut l = vec![p];
@@ -202,7 +213,7 @@ impl Forker {
                     l.extend(self.collect_children(*c));
                 }
                 l
-            },
+            }
         }
     }
 
@@ -223,7 +234,7 @@ impl Forker {
                 self.children.get_mut(&exit_parent).unwrap().push(*orphan);
             }
         } else {
-            // should set ALL descendants to be child of ROOT 
+            // should set ALL descendants to be child of ROOT
             let desc = self.collect_children(p);
             for d in desc.iter() {
                 self.children.insert(*d, vec![]);
@@ -233,7 +244,10 @@ impl Forker {
         }
 
         // remove the entry from its parent child list
-        self.children.get_mut(&exit_parent).unwrap().retain(|&x| x != p);
+        self.children
+            .get_mut(&exit_parent)
+            .unwrap()
+            .retain(|&x| x != p);
 
         // should never use this.
         self.children.insert(p, vec![]);
@@ -245,39 +259,84 @@ impl Forker {
 
     fn bad_action(&self, action: &str) {
         println!(
-            "bad action: {}, must be X+Y or X- where X and Y are processes", 
+            "bad action: {}, must be `X+Y` or `X-` where `X` and `Y` are processes",
             action
         );
         std::process::exit(1);
     }
 
-    fn is_legal(&self, action: &str) -> Vec<&str> {
-        unimplemented!()
+    fn is_legal<'a>(&'a self, action: &'a str) -> Result<Vec<&str>, &str> {
+        let re = Regex::new(r"^(\w+)([+-])(\w+)$").unwrap();
+        let capture = re.captures(action);
+
+        if capture.is_none() {
+            return Err("bad action");
+        }
+
+        let capture = capture.unwrap();
+        let p1 = capture.get(1).unwrap().as_str();
+        let op = capture.get(2).unwrap().as_str();
+        let p2 = capture.get(3).unwrap().as_str();
+
+        match op {
+            "+" => Ok(vec![p1, p2]),
+            "-" => Ok(vec![p1]),
+            _ => Err("bad action"),
+        }
     }
 
-    fn run() {
-        unimplemented!()
+    fn run(mut self) {
+        println!("                           Process Tree:");
+        self.print_tree();
+        println!("");
+
+        let action_list: Vec<&str> = match !self.action_list.is_empty() {
+            true => {
+                // same as `action_list = self.action_list.split(',')` (python)
+                self.action_list
+                    .iter()
+                    .map(|action| action.as_str())
+                    .collect()
+            }
+            false => Vec::new(),
+        };
+
+        let mut actions = 0;
+        let mut temp_process_list = vec![self.root_name];
+        let mut level_list = hash_map! { self.root_name => 1 };
+
+        while actions < self.max_actions {
+            let rand = seed::seed();
+
+            if rand < self.fork_percentage as i32 {
+                match thread_rng().gen_bool(self.fork_percentage) {
+                    true => {
+                        let fork_choice = seed::choice(&temp_process_list);
+                        let new_child = self.get_name();
+                        // todo : action_list.push(fork_choice+new_child)
+                    }
+                    false => {
+                        let exit_choice = seed::choice(&temp_process_list);
+
+                        if exit_choice == &self.root_name {
+                            continue;
+                        }
+                    }
+                }
+            }
+            actions += 1;
+        }
     }
 }
 
 #[macro_export]
-    macro_rules! hash_map (
+macro_rules! hash_map (
     { $($key:expr => $value:expr), + } => {
         {
             let mut map = HashMap::new();
-            $(
-                map.insert($key, $value);
-            )+
+            $( map.insert($key, $value); )+
+
             map
         }
     };
 );
-
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_something() {
-        unimplemented!()
-    }
-}
