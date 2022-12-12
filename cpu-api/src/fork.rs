@@ -1,11 +1,6 @@
 use std::collections::HashMap;
 use std::string::String;
 
-use clap::Parser;
-use rand::thread_rng;
-use rand::Rng;
-use regex::Regex;
-
 use crate::hash_map;
 use crate::seed;
 
@@ -28,8 +23,8 @@ use crate::seed;
 // TODO : add `seed` to Forker, for enabled to use `clap::Parser`
 #[derive(Clone, Debug, PartialEq)]
 struct Forker {
-    fork_percentage: f64,
-    max_actions: u32,
+    fork_percentage: i32,
+    max_actions: usize,
     action_list: Vec<String>,
     show_tree: bool,
     just_final: bool,
@@ -53,13 +48,13 @@ struct Forker {
     base_names: String,
 
     curr_names: String,
-    curr_index: u32,
+    curr_index: usize,
 }
 
 impl Forker {
-    pub fn new(
-        fork_percentage: f64,
-        max_actions: u32,
+    fn new(
+        fork_percentage: i32,
+        max_actions: usize,
         action_list: Vec<String>,
         show_tree: bool,
         just_final: bool,
@@ -110,7 +105,7 @@ impl Forker {
     }
 
     fn get_name(&mut self) -> char {
-        if self.curr_index == self.curr_names.len() as u32 {
+        if self.curr_index == self.curr_names.len() {
             self.grow_names();
         }
 
@@ -220,8 +215,7 @@ impl Forker {
     fn do_exit(&mut self, p: char) -> String {
         // remove the process from the process list
         if p == self.root_name {
-            println!("root process: cannot exit");
-            std::process::exit(1);
+            return "root process cannot exit".to_string();
         }
 
         let exit_parent = self.parents[&p];
@@ -257,74 +251,145 @@ impl Forker {
         format!("{} EXITS", p)
     }
 
-    fn bad_action(&self, action: &str) {
-        println!(
+    fn bad_action(&self, action: String) -> Result<Vec<String>, String> {
+        Err(format!(
             "bad action: {}, must be `X+Y` or `X-` where `X` and `Y` are processes",
             action
-        );
-        std::process::exit(1);
+        ))
     }
 
-    fn is_legal<'a>(&'a self, action: &'a str) -> Result<Vec<&str>, &str> {
-        let re = Regex::new(r"^(\w+)([+-])(\w+)$").unwrap();
-        let capture = re.captures(action);
-
-        if capture.is_none() {
-            return Err("bad action");
-        }
-
-        let capture = capture.unwrap();
-        let p1 = capture.get(1).unwrap().as_str();
-        let op = capture.get(2).unwrap().as_str();
-        let p2 = capture.get(3).unwrap().as_str();
-
-        match op {
-            "+" => Ok(vec![p1, p2]),
-            "-" => Ok(vec![p1]),
-            _ => Err("bad action"),
+    // TODO: should refactor
+    fn is_legal(& self, action: String) -> Result<Vec<String>, String> {
+        if action.contains("+") {
+            let tmp: Vec<&str> = action.split("+").collect();
+            if tmp.len() != 2 {
+                return self.bad_action(action);
+            }
+            return Ok(vec![tmp[0].to_string(), tmp[1].to_string()]);
+        } else if action.contains("-") {
+            let tmp: Vec<&str> = action.split("-").collect();
+            if tmp.len() != 2 {
+                return self.bad_action(action);
+            }
+            return Ok(vec![tmp[0].to_string()]);
+        } else {
+            return self.bad_action(action);
         }
     }
 
-    fn run(mut self) {
+    #[warn(unused_variables)]
+    fn run(&mut self) {
         println!("                           Process Tree:");
         self.print_tree();
         println!("");
 
-        let action_list: Vec<&str> = match !self.action_list.is_empty() {
-            true => {
-                // same as `action_list = self.action_list.split(',')` (python)
-                self.action_list
-                    .iter()
-                    .map(|action| action.as_str())
-                    .collect()
-            }
-            false => Vec::new(),
-        };
+        let mut action_list: Vec<String> = Vec::new();
 
-        let mut actions = 0;
-        let mut temp_process_list = vec![self.root_name];
-        let mut level_list = hash_map! { self.root_name => 1 };
+        if self.action_list.is_empty() {
+            let mut action_list = self.action_list
+                .iter()
+                .map(|x| x.to_string())
+                .collect::<Vec<String>>();
+        } else {
+            let mut actions = 0;
+            let mut temp_process_list = vec![self.root_name];
+            let level_list = hash_map!(self.root_name => 1);
 
-        while actions < self.max_actions {
-            let rand = seed::seed();
-
-            if rand < self.fork_percentage as i32 {
-                match thread_rng().gen_bool(self.fork_percentage) {
+            while actions < self.max_actions {
+                match seed::seed() < self.fork_percentage {
                     true => {
                         let fork_choice = seed::choice(&temp_process_list);
                         let new_child = self.get_name();
-                        // todo : action_list.push(fork_choice+new_child)
-                    }
+                        action_list.push(format!("{}+{}", fork_choice, new_child));
+                        temp_process_list.push(new_child);
+                    },
                     false => {
                         let exit_choice = seed::choice(&temp_process_list);
-
                         if exit_choice == &self.root_name {
                             continue;
+                        }
+
+                        // this is a hack to get around the borrow checker
+                        // TODO: find more better solution
+                        let mut temp_process_list = temp_process_list.clone();
+                        let index = temp_process_list
+                                    .iter()
+                                    .position(|x| x == exit_choice)
+                                    .unwrap();
+
+                        temp_process_list.remove(index);
+
+                        action_list.push(format!("{}-", exit_choice));
+                    }
+                }
+                actions += 1;
+            }
+
+            let mut action = String::new();
+            for a in action_list.iter() {
+                let tmp = self.is_legal(a.clone()).unwrap();
+                match tmp.len() {
+                    2 =>  {
+                        let fork_choice = tmp[0].chars().next().unwrap();
+                        let new_child = tmp[1].chars().next().unwrap();
+
+                        if !self.process_list.contains(&fork_choice) {
+                            println!("{} is not a valid process", fork_choice);
+                            continue;
+                        }
+
+                        action = String::from(self.do_fork(fork_choice, new_child));
+                    },
+                    _ => {
+                        let exit_choice = tmp[0].chars().next().unwrap();
+
+                        if !self.process_list.contains(&exit_choice) {
+                            println!("{} is not a valid process", exit_choice);
+                            continue;
+                        }
+
+                        if self.leaf_only && self.children[&exit_choice].len() > 0 {
+                            println!("{} EXITS (failed: has children.", exit_choice);
+                            continue;
+                        } else {
+                            action = String::from(self.do_exit(exit_choice));
+                        }
+                    }
+                }
+
+                if self.show_tree {
+                    match self.solve {
+                        true => println!("Action: {}", action),
+                        false => print!("Action?"),
+                    }
+
+                    if !self.just_final {
+                        self.print_tree();
+                    }
+                } else {
+                    // show actions
+                    println!("Action: {}", action);
+
+                    if !self.just_final {
+                        match self.solve {
+                            true => self.print_tree(),
+                            false => print!("process Tree?"),
                         }
                     }
                 }
             }
-            actions += 1;
+            if self.just_final {
+                match self.show_tree {
+                    true => {
+                        print!("\n                        Final Process Tree:");
+                        self.print_tree();
+                        print!("");
+                    },
+                    false => {
+                        print!("\n                        Final Process Tree?\n")
+                    }
+                }
+            }
         }
     }
 }
