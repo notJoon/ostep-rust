@@ -1,17 +1,16 @@
 # ostep-rust
 re-implemeting OSTEP sample code into rust
 
-original code: [ostep-homwork](https://github.com/remzi-arpacidusseau/ostep-homework)
+original code: [ostep-homework](https://github.com/remzi-arpacidusseau/ostep-homework)
 
 ## Contribution
-
 
 ## Table of Contents
 
 | Chapter | status | link |
 | --- | --- | --- |
-| cpu-api |  ❌  |  |
-| cpu-intro |  ❌  | |
+| cpu-api |  WIP  | [link](https://github.com/notJoon/ostep-rust/tree/main/cpu-api) |
+| cpu-intro |  WIP  | [link](https://github.com/notJoon/ostep-rust/tree/main/cpu-intro) |
 | cpu-sched-lottery |  ❌  | |
 | cpu-sched-mlfq |  ❌  | |
 | cpu-sched-multi |  ❌  | |
@@ -33,6 +32,7 @@ original code: [ostep-homwork](https://github.com/remzi-arpacidusseau/ostep-home
 | threads-locks  |  ❌  | |
 | threads-sema  |  ❌  | |
 | vm-beyondphys-policy  |  ❌  | |
+| vm-beyondphys| ❌ | |
 | vm-mechanism  |  ❌  | |
 | vm-paging  |  ❌  | |
 | vm-segmentation  |  ❌  | |
