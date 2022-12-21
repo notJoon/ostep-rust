@@ -10,7 +10,7 @@ original code: [ostep-homework](https://github.com/remzi-arpacidusseau/ostep-hom
 | Chapter | status | link |
 | --- | --- | --- |
 | cpu-api |  WIP  | [link](https://github.com/notJoon/ostep-rust/tree/main/cpu-api) |
-| cpu-intro |  ❌  | |
+| cpu-intro |  WIP  | [link](https://github.com/notJoon/ostep-rust/tree/main/cpu-intro) |
 | cpu-sched-lottery |  ❌  | |
 | cpu-sched-mlfq |  ❌  | |
 | cpu-sched-multi |  ❌  | |
