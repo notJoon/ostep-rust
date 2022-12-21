@@ -1,205 +1,232 @@
 use std::collections::HashMap;
 
-/// process switch behavior
-/// SCHED_SWITCH_ON_IO = 'SWITCH_ON_IO'
-/// SCHED_SWITCH_ON_END = 'SWITCH_ON_END'
-#[derive(PartialEq, Eq, Hash)]
-#[warn(dead_code)]
-enum ScheduleSwitchBehavior {
-    SwitchOnIO,
-    SwitchOnEnd,
-}
+use crate::{push_process, assign_state, seed};
 
-/// I/O finished behavior
-#[derive(PartialEq, Eq, Hash)]
-#[warn(dead_code)]
-enum IORunBehavior {
-    Later,
-    Immediate,
-}
+const DO_COMPUTE: &'static str = "cpu";
+const DO_IO: &'static str = "io";
+const DO_IO_DONE: &'static str = "io_done";
 
-/// process states
-#[derive(Eq, PartialEq, Hash)]
-#[warn(dead_code)]
-enum ProcessState {
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum ProcessState {
     Running,
     Ready,
-    Done,
-    Wait,
+    Blocked,
+    Terminated,
 }
 
-/// members of process structure
-/// PROC_CODE = 'code_'
-/// PROC_PC = 'pc_'
-/// PROC_ID = 'pid_'
-/// PROC_STATE = 'proc_state_'
-#[derive(Eq, PartialEq, Hash)]
-#[warn(dead_code)]
-enum ProcessStructure {
-    Code,
-    PC,
-    ID,
-    State,
+pub struct ProcessStructure {
+    pub proc_id: i32,
+    pub proc_pc: usize,
+    pub proc_code: Vec<&'static str>, // should find better way to do this
+    pub proc_state: ProcessState,
 }
 
-#[warn(dead_code)]
-enum ProcessStructureValue {
-    Code(Vec<ProcessAction>),
-    PC(i32),
-    ID(usize),
-    State(ProcessState),
-}
-
-/// things a process can do
-/// DO_COMPUTE = 'cpu'
-/// DO_IO = 'io'
-/// DO_IO_DONE = 'io_done'
-#[derive(Eq, PartialEq, Hash)]
-#[warn(dead_code)]
-enum ProcessAction {
-    Compute,
-    IO,
-    IODone,
-}
-
-#[warn(dead_code)]
-struct Scheduler {
-    proc_info: HashMap<usize, HashMap<ProcessStructure, usize>>,
-    process_switch_behavior: ScheduleSwitchBehavior,
-    io_done_behavior: IORunBehavior,
-    io_length: usize,
-    curr_proc: i32,
+pub struct Scheduler {
+    pub proc_info: HashMap<i32, ProcessStructure>,
+    pub curr_proc: i32,
+    io_finish_time: HashMap<i32, i32>,
 }
 
 impl Scheduler {
-    fn new(
-        self,
-        process_switch_behavior: ScheduleSwitchBehavior, 
-        io_done_behavior: IORunBehavior, 
-        io_length: usize
-    ) -> Self {
-        let process_switch_behavior = process_switch_behavior;
-        let io_done_behavior = io_done_behavior;
-        let io_length = io_length;
-        let curr_proc = 0;
-
+    pub fn new() -> Self {
         Self {
             proc_info: HashMap::new(),
-            process_switch_behavior,
-            io_done_behavior,
-            io_length,
-            curr_proc,
+            curr_proc: 0,
+            io_finish_time: HashMap::new(),
         }
     }
 
-    fn new_process(&mut self) -> usize {
-        let process_id = self.proc_info.len();
-        let mut process_data: HashMap<ProcessStructure, ProcessStructureValue> = HashMap::new();
-        process_data.insert(ProcessStructure::PC, ProcessStructureValue::PC(0));
-        process_data.insert(ProcessStructure::ID, ProcessStructureValue::ID(process_id));
-        process_data.insert(ProcessStructure::State, ProcessStructureValue::State(ProcessState::Ready));
-        process_data.insert(ProcessStructure::Code, ProcessStructureValue::Code(Vec::new()));
+    pub fn new_process(&mut self) -> i32 {
+        let proc_id = self.proc_info.len() as i32;
+        let proc_info = ProcessStructure {
+            proc_id,
+            proc_pc: 0,
+            proc_code: Vec::new(),
+            proc_state: ProcessState::Ready,
+        };
+        self.proc_info.insert(proc_id, proc_info);
+        proc_id
+    } 
 
-        process_id
-    }
-
-    // program looks like this:
-    //     c7,i,c1,i
-    // which means compute for 7, then i/o, then compute 1, then i/o
-    fn load_program(&mut self, program: String) -> Result<(), &str> {
+    pub fn load_program(&mut self, program: &str) {
         let proc_id = self.new_process();
 
-        for token in program.split(',') {
-            let opcode = token.chars().nth(0);
-            match opcode {
-                // compute
-                Some('c') => {
-                    let num = token[1..].parse::<i32>();
-                    for _ in num {
-                        unimplemented!()
-                    }
-                },
-                // input I/O
-                Some('i') => {
-                    unimplemented!()
-                },
-                _ => {
-                    panic!("invalid opcode")
-                }
+        for p in program.split(',') {
+            let opcode = p.chars().nth(0).unwrap();
+            self.check_opcode(opcode, p, proc_id);
+        }
+    }
+
+    pub fn load(&mut self, program: &str) {
+        let proc_id = self.new_process();
+
+        // program is a string of colon-separated instructions (like "5:100")
+        // which denotes `5` compute instructions and `100` cpu chances.
+        let tmp = program.split(':').collect::<Vec<&str>>();
+        if tmp.len() != 2 {
+            panic!("Bad description `{}`: Must be integer `x:y`", program)
+        }
+
+        let compute = tmp[0].parse::<i32>().unwrap();
+        let chances = tmp[1].parse::<i32>().unwrap() as f32 / 100.0;
+
+        for _ in 0..compute {
+            if (seed::seed() as f32) < chances {
+                push_process!(self.proc_info, proc_id, DO_COMPUTE);
+            } else {
+                push_process!(self.proc_info, proc_id, DO_IO);
+                push_process!(self.proc_info, proc_id, DO_IO_DONE);
             }
         }
-        Err("error")
     }
 
-    fn load(&mut self, desc: String) {
-        let proc_id = self.new_process();
-        let tmp: Vec<&str> = desc.split(":").collect();
-        if tmp.len() != 2 {
-            println!("Bad description {}: must be number `<x:y>", desc);
-            println!("    where `X` is the number of instructions");
-            println!("    and `Y` is the percent change that an instruction is CPU not IO.");
-            
-        }
-
-        let num_instructions = tmp[0];
-        let cpu_chance = tmp[1];
-    }
-
-    fn move_to_ready(mut self, mut pid: i32, expected: &str) { 
+    fn move_to_ready(&mut self, pid: i32, expected: ProcessState) {
         if pid == -1 {
-            pid = self.curr_proc;
+            self.curr_proc;
         }
+        assert_eq!(self.proc_info[&pid].proc_state, expected);
+        assign_state!(
+            self.proc_info, 
+            pid, 
+            ProcessState::Ready
+        );
     }
 
-    fn move_to_wait(self) {
-        unimplemented!()
+    fn move_to_running (&mut self, expected: ProcessState) {
+        assert_eq!(self.proc_info[&self.curr_proc].proc_state, expected);
+        assign_state!(
+            self.proc_info, 
+            self.curr_proc, 
+            ProcessState::Running
+        );
     }
 
-    fn move_to_running(self) {
-        unimplemented!()
+    fn move_to_done(&mut self, expected: ProcessState) {
+        assert_eq!(self.proc_info[&self.curr_proc].proc_state, expected);
+        assign_state!(
+            self.proc_info, 
+            self.curr_proc, 
+            ProcessState::Terminated
+        );
     }
 
-    fn move_to_done(self) {
-        unimplemented!()
+    fn next_proc(&mut self, pid: i32) {
+        if pid != -1 {
+            self.curr_proc = pid;
+            self.move_to_running(ProcessState::Ready);
+        }
+
+        let curr = self.curr_proc + 1;
+        let end = self.proc_info.len() as i32;
+
+        self.state_ready_to_running(curr, end);
+        self.state_ready_to_running(0, curr);
     }
 
-    fn next_proc(self, pid:i32) {
-        unimplemented!()
-    }
-
-    fn get_num_processes(&self) -> usize {
+    pub fn get_num_processes(&self) -> usize {
         self.proc_info.len()
     }
 
-    fn get_num_instructions(self) {
-        unimplemented!()
+    pub fn get_num_instructions(&self, pid: i32) -> usize {
+        self.proc_info[&pid].proc_code.len()
     }
 
-    fn get_instruction(self) {
-        unimplemented!()
+    // pub fn get_instruction(&self, pid: i32, idx: i32) {
+    //     self.proc_info[&pid].proc_state
+    // }
+
+    pub fn get_num_actives(&self) -> usize {
+        let mut result = 0;
+        for p in 0..self.proc_info.len() {
+            let state = self.proc_info[&(p as i32)].proc_state;
+
+            if state != ProcessState::Terminated {
+                result += 1;
+            }
+        }
+        result
     }
 
-    fn get_num_active(self) -> usize {
-        unimplemented!()
+    pub fn get_num_runnable(&self) -> usize {
+        let mut result = 0;
+        for p in 0..self.proc_info.len() {
+            let state = self.proc_info[&(p as i32)].proc_state;
+
+            if state == ProcessState::Ready 
+            || state == ProcessState::Running {
+                result += 1;
+            }
+        }
+        result
     }
 
-    fn get_ios_in_flight(self) -> usize {
-        unimplemented!()
+    // TODO
+    // pub fn get_ios_in_flight(&self, curr_time: i32) -> usize {
+    //     let mut flights = 0;
+
+    //     for pid in 0..self.proc_info.len() {
+    //         for time in self.io_finish_time[&(pid as i32)] {
+    //             if *time >= curr_time {
+    //                 flights += 1;
+    //             }
+    //         }
+    //     }
+    //     flights
+    // }
+
+    fn check_for_switch(self) {
+        return
     }
 
-    fn check_for_switch(self) -> () {
-        ()
+    fn state_ready_to_running(&mut self, start: i32, end: i32) {
+        for i in start..end {
+            if self.proc_info[&i].proc_state == ProcessState::Ready {
+                self.curr_proc = i;
+                self.move_to_running(ProcessState::Ready);
+                return;
+            }
+        }
     }
 
-    fn space(self, cols: i32) {
-        unimplemented!()
+    fn check_opcode(&mut self, opcode: char, program: &str, proc_id: i32) {
+        match opcode {
+            'c' => {
+                let reg = program[1..].parse::<i32>().unwrap();
+                for _ in 0..reg {
+                    push_process!(self.proc_info, proc_id, DO_COMPUTE);
+                }
+            },
+            'i' => {
+                push_process!(self.proc_info, proc_id, DO_IO);
+                push_process!(self.proc_info, proc_id, DO_IO_DONE);
+            },
+            _ => {
+                panic!(
+                    "invalid opcode `{}`: opcode must be 'c' or 'i'.", 
+                    opcode
+                );
+            }
+        }
     }
+}
 
-    fn check_if_done(self) {
-        unimplemented!()
-    }
+#[macro_export]
+macro_rules! push_process {
+    ($proc_info:expr, $proc_id:expr, $process:expr) => {
+        $proc_info
+            .get_mut(&$proc_id)
+            .unwrap()
+            .proc_code
+            .push($process);
+    };
+}
 
-    fn run(self) {
-        unimplemented!()
-    }
+#[macro_export]
+macro_rules! assign_state {
+    ($proc_info:expr, $proc_id:expr, $state:expr) => {
+        $proc_info
+            .get_mut(&$proc_id)
+            .unwrap()
+            .proc_state = $state;
+    };
 }
